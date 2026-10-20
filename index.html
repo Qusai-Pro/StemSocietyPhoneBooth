@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>STEM Society Meme Booth</title>
+  <link rel="icon" href="assets/logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Fetch all the page's modules in parallel instead of one import at a time. -->
+  <link rel="modulepreload" href="js/app.js" />
+  <link rel="modulepreload" href="js/config.js" />
+  <link rel="modulepreload" href="js/calibration.js" />
+  <link rel="modulepreload" href="js/face.js" />
+  <link rel="modulepreload" href="js/assets.js" />
+  <link rel="modulepreload" href="js/renderer.js" />
+  <link rel="modulepreload" href="js/people.js" />
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <img class="logo" src="assets/logo.png" alt="STEM Society" />
+      <div>
+        <h1>MEME <span>BOOTH</span></h1>
+        <p>STEM Society · Beaconhouse College Program PECHS</p>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div class="stage-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div class="stage">
+          <canvas id="outputCanvas" width="1280" height="720"></canvas>
+          <canvas id="debugCanvas" class="hidden" aria-hidden="true"></canvas>
+
+          <!-- On-screen guide: HTML on top of the video, so it never appears in a photo. -->
+          <div id="tryCard" class="try-card" aria-live="polite">
+            <div class="try-pic"><img class="try-img" alt="" /><i class="try-emoji"></i></div>
+            <div class="try-text">
+              <span class="try-kicker">TRY THIS</span>
+              <b class="try-label"></b>
+              <span class="try-hint"></span>
+            </div>
+          </div>
+          <div id="emoteBar" class="emote-bar" aria-label="Reactions: tap one to preview its meme"></div>
+
+          <div id="countdownOverlay" class="hidden"></div>
+          <div id="flash" class="flash"></div>
+        </div>
+
+        <div class="controls">
+          <button id="calibrateBtn" class="btn secondary" disabled>1. Calibrate (5s)</button>
+          <button id="startBoothBtn" class="btn primary" disabled>2. Start Photo Strip (3 pics)</button>
+        </div>
+        <p id="statusText" class="status" role="status">Starting…</p>
+
+        <div class="tools">
+          <label class="toggle" title="Off shows the true view, so text on your clothes reads the right way round">
+            <input type="checkbox" id="mirrorToggle" checked />
+            <span>Mirror like a selfie</span>
+          </label>
+          <label class="toggle" title="Track up to 4 people at once (3 on phones). Off is a little faster when you're alone.">
+            <input type="checkbox" id="groupToggle" checked />
+            <span>Group mode</span>
+          </label>
+          <label class="toggle" title="Send the strip to the printer as soon as it's done">
+            <input type="checkbox" id="autoPrintToggle" />
+            <span>Auto-print</span>
+          </label>
+          <button id="fullscreenBtn" class="mini" type="button">Fullscreen</button>
+          <select id="testPose" class="mini" aria-label="Preview a meme">
+            <option value="">Preview a meme…</option>
+          </select>
+          <button id="debugBtn" class="mini" type="button" aria-pressed="false">Debug view</button>
+        </div>
+
+        <details class="poses">
+          <summary>All 14 reactions — how to trigger them</summary>
+          <p>Up to 4 people at once (3 on phones). Calibrate with everyone in frame so each person's face is measured against their own neutral.</p>
+          <ul id="poseList"></ul>
+          <p>Keys: <kbd>B</kbd> start booth · <kbd>P</kbd> print · <kbd>F</kbd> fullscreen · <kbd>D</kbd> debug · <kbd>C</kbd> recalibrate · <kbd>M</kbd> mirror · <kbd>1</kbd>–<kbd>0</kbd> <kbd>-</kbd> <kbd>=</kbd> <kbd>[</kbd> <kbd>]</kbd> show each meme for 2 s</p>
+        </details>
+        <pre id="hud" class="hud hidden"></pre>
+      </div>
+
+      <aside class="gallery-container">
+        <h2>Your Photo Strip</h2>
+        <img id="stripImg" class="strip-img" alt="Your photo strip" />
+        <button id="downloadBtn" class="btn secondary" disabled>Download strip</button>
+        <button id="printBtn" class="btn secondary" disabled>Print strip</button>
+        <button id="qrBtn" class="btn secondary hidden" disabled>Show QR code</button>
+        <a id="galleryLink" class="gallery-link hidden" href="gallery" target="_blank" rel="noopener">Open the gallery</a>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Shown after the strip is made when booth_server.py is running. -->
+  <div id="shareModal" class="share hidden" data-state="uploading" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="share-card">
+      <h2 id="shareTitle">YOUR STRIP IS READY!</h2>
+      <div class="share-body">
+        <img id="shareImg" class="share-strip" alt="" />
+        <div class="share-qr">
+          <canvas id="qrCanvas" class="hidden"></canvas>
+          <div class="spinner" aria-hidden="true"></div>
+          <p id="shareMsg"></p>
+          <code id="shareUrl"></code>
+        </div>
+      </div>
+      <div class="share-actions">
+        <button id="sharePrint" class="btn secondary">Print</button>
+        <button id="shareDownload" class="btn secondary">Download</button>
+        <button id="shareClose" class="btn primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ES modules and the camera don't work from file://. Say so instead of hanging.
+    if (location.protocol === "file:") {
+      document.getElementById("statusText").textContent =
+        "This page has to be served, not opened as a file. In this folder run:  python3 booth_server.py  then open http://localhost:8000";
+    }
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

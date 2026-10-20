@@ -1,0 +1,177 @@
+/* STEM Society Meme Booth — colours come from the logo: pixel-robot red, ink black, cream, soft pink.
+   Pixel font: drop PressStart2P-Regular.ttf into fonts/ for offline use (see README); online it loads
+   from Google Fonts; otherwise it falls back to a monospace face. Body text stays plain for readability. */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
+@font-face { font-family: 'Press Start 2P'; src: local('Press Start 2P'), url('fonts/PressStart2P-Regular.ttf') format('truetype'); font-display: swap; }
+
+:root {
+  --red: #e5584f; --red-dark: #b83a35; --ink: #1b1213; --panel: #261819;
+  --cream: #fff7f4; --pink: #f7c9c4; --muted: #c9a9a5;
+  --pixel: 'Press Start 2P', ui-monospace, 'Courier New', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  background-color: var(--ink);
+  background-image:
+    linear-gradient(rgba(229, 88, 79, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(229, 88, 79, 0.07) 1px, transparent 1px);
+  background-size: 28px 28px;
+  color: var(--cream);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 22px 20px;
+}
+
+.app-container { width: 100%; max-width: 1240px; display: flex; flex-direction: column; gap: 20px; }
+
+header { display: flex; align-items: center; justify-content: center; gap: 18px; text-align: left; }
+header .logo { width: 84px; height: 84px; border-radius: 50%; border: 3px solid var(--red); box-shadow: 4px 4px 0 var(--red-dark); background: #fff; }
+header h1 { font: 400 clamp(1.3rem, 3.4vw, 2.2rem)/1.2 var(--pixel); color: var(--cream); text-shadow: 4px 4px 0 var(--red-dark); }
+header h1 span { color: var(--red); }
+header p { color: var(--pink); font-size: 0.95rem; margin-top: 8px; font-weight: 600; }
+
+.main-content { display: grid; grid-template-columns: 1fr 300px; gap: 24px; align-items: start; }
+
+.stage-container, .gallery-container {
+  background: var(--panel);
+  border: 4px solid var(--red);
+  box-shadow: 6px 6px 0 var(--red-dark);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+#webcam { display: none; }
+/* No CSS mirroring: the canvas is already mirrored, so memes read the right way round. */
+.stage { position: relative; width: 100%; overflow: hidden; border: 4px solid var(--ink); background: #000; }
+#outputCanvas { display: block; width: 100%; height: auto; }
+#debugCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+/* ---- on-screen guide ---- */
+.try-card {
+  position: absolute; top: 10px; left: 10px; max-width: min(58%, 430px);
+  display: flex; gap: 10px; align-items: center;
+  background: var(--cream); color: var(--ink);
+  border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--red);
+  padding: 8px 12px 8px 8px; pointer-events: none;
+}
+.try-card.swap { animation: pop 0.35s cubic-bezier(.2, 1.5, .4, 1); }
+.try-pic { position: relative; flex: none; width: 66px; height: 66px; }
+.try-pic img { width: 100%; height: 100%; object-fit: cover; border: 2px solid var(--ink); background: var(--pink); }
+.try-emoji { position: absolute; right: -8px; bottom: -8px; font-style: normal; font-size: 24px; line-height: 1; }
+.try-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.try-kicker { font: 400 8px/1 var(--pixel); color: var(--red-dark); letter-spacing: 1px; }
+.try-label { font: 400 clamp(11px, 1.6vw, 15px)/1.2 var(--pixel); color: var(--ink); }
+.try-hint { font-size: clamp(11px, 1.3vw, 13.5px); font-weight: 600; line-height: 1.25; color: #4a3436; }
+@keyframes pop { 0% { transform: scale(0.8) rotate(-2deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
+
+.emote-bar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; gap: 6px; padding: 26px 8px 8px; overflow-x: auto; scrollbar-width: none;
+  background: linear-gradient(to top, rgba(27, 18, 19, 0.92) 55%, rgba(27, 18, 19, 0));
+  container-type: inline-size;
+}
+.emote-bar::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 1 0 40px; max-width: 92px; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  background: none; border: 0; color: var(--cream); cursor: pointer; transition: transform 0.15s;
+}
+.chip .thumb { position: relative; width: 100%; aspect-ratio: 1; border: 2px solid var(--cream); background: var(--pink); }
+.chip .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.chip .thumb i { position: absolute; right: -5px; bottom: -6px; font-style: normal; font-size: 17px; line-height: 1; }
+.chip b { display: none; font: 400 8px/1.3 var(--pixel); text-align: center; letter-spacing: 0; }
+/* Names under the chips only when there's room (big screens / fullscreen); the TRY THIS card always names the reaction. */
+@container (min-width: 1040px) { .chip b { display: block; } }
+.chip:hover { transform: translateY(-3px); }
+.chip.on { transform: translateY(-8px); }
+.chip.on .thumb { border-color: var(--red); box-shadow: 0 0 0 3px var(--red), 0 0 22px var(--red); }
+.chip.on b { color: var(--ink); background: var(--red); padding: 2px 4px; }
+
+#countdownOverlay {
+  position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+  font: 400 clamp(3.5rem, 13vw, 8rem)/1 var(--pixel);
+  color: var(--red); text-shadow: 6px 6px 0 var(--ink), -3px -3px 0 var(--cream);
+  pointer-events: none; white-space: nowrap;
+}
+#countdownOverlay.word { font-size: clamp(2rem, 7vw, 4.5rem); }
+.flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.flash.go { animation: flash 0.4s ease-out; }
+@keyframes flash { 0% { opacity: 0.95; } 100% { opacity: 0; } }
+
+.hidden { display: none !important; }
+.controls { display: flex; gap: 14px; width: 100%; justify-content: center; }
+
+/* ---- buttons ---- */
+.btn {
+  padding: 15px 20px; border: 3px solid var(--ink); font: 400 11px/1.3 var(--pixel); letter-spacing: 0.5px;
+  cursor: pointer; transition: transform 0.08s, box-shadow 0.08s; box-shadow: 0 5px 0 var(--red-dark);
+}
+.btn.secondary { background: var(--cream); color: var(--red-dark); }
+.btn.primary { background: var(--red); color: #fff; }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 7px 0 var(--red-dark); }
+.btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 1px 0 var(--red-dark); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: 0 5px 0 #5b2a28; }
+.controls .btn { flex: 1; max-width: 340px; }
+
+.status { color: var(--cream); font-size: 0.95rem; font-weight: 600; text-align: center; max-width: 680px; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--pink); font-size: 0.88rem; cursor: pointer; user-select: none; }
+.toggle input { width: 16px; height: 16px; accent-color: var(--red); cursor: pointer; }
+.tools { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: center; }
+.mini { font: inherit; font-size: 0.85rem; color: var(--cream); background: rgba(255, 247, 244, 0.08); border: 2px solid rgba(255, 247, 244, 0.3); padding: 6px 10px; cursor: pointer; }
+.mini:hover { border-color: var(--red); }
+.mini[aria-pressed="true"] { background: rgba(229, 88, 79, 0.3); border-color: var(--red); }
+select.mini option { color: var(--ink); }
+
+.poses { width: 100%; color: var(--pink); font-size: 0.85rem; background: rgba(0, 0, 0, 0.25); border: 2px solid rgba(229, 88, 79, 0.5); padding: 10px 14px; }
+.poses summary { cursor: pointer; font-weight: 800; color: var(--cream); }
+.poses ul { list-style: none; margin: 10px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px 16px; }
+.poses li { display: flex; gap: 8px; align-items: baseline; color: var(--muted); }
+.poses li span { font-size: 1.05rem; }
+.poses li b { color: var(--cream); font-weight: 800; margin-right: 4px; }
+.poses p { color: var(--muted); margin-top: 4px; }
+kbd { font-family: inherit; font-size: 0.75rem; padding: 1px 6px; border: 1px solid rgba(255, 247, 244, 0.35); }
+.hud { width: 100%; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #86efac; background: rgba(0, 0, 0, 0.6); padding: 10px 12px; white-space: pre-wrap; }
+
+/* ---- strip panel ---- */
+.gallery-container { position: sticky; top: 16px; }
+.gallery-container h2 { font: 400 11px/1.4 var(--pixel); color: var(--pink); text-transform: uppercase; text-align: center; }
+.gallery-container .btn { width: 100%; }
+.strip-img { width: 100%; max-height: 62vh; object-fit: contain; background: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55); transform: rotate(-1deg); transition: transform 0.3s; }
+.strip-img:hover { transform: rotate(0) scale(1.02); }
+.gallery-link { color: var(--pink); font-size: 0.85rem; }
+
+/* ---- share / QR screen ---- */
+.share { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(27, 18, 19, 0.9); }
+.share-card { background: var(--cream); color: var(--ink); border: 4px solid var(--red); box-shadow: 8px 8px 0 var(--red-dark); padding: 22px; max-width: 760px; width: 100%; display: flex; flex-direction: column; gap: 18px; align-items: center; animation: pop 0.35s cubic-bezier(.2, 1.5, .4, 1); }
+.share-card h2 { font: 400 clamp(12px, 2.4vw, 18px)/1.4 var(--pixel); color: var(--red-dark); text-align: center; }
+.share-body { display: flex; gap: 26px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.share-strip { height: min(54vh, 480px); max-width: 100%; border: 3px solid var(--ink); box-shadow: 5px 5px 0 var(--red); background: #fff; }
+.share-qr { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 320px; text-align: center; }
+.share-qr canvas { max-width: 100%; height: auto; border: 3px solid var(--ink); }
+.share-qr p { font-weight: 800; font-size: 1rem; }
+.share-qr code { font-size: 0.8rem; color: #5b3a3c; word-break: break-all; }
+.spinner { width: 54px; height: 54px; border: 6px solid var(--pink); border-top-color: var(--red); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.share:not([data-state="uploading"]) .spinner { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.share-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+@media (max-width: 900px) {
+  body { padding: 14px 10px; }
+  header .logo { width: 64px; height: 64px; }
+  .main-content { grid-template-columns: 1fr; gap: 18px; }
+  .gallery-container { position: static; }
+  .stage-container, .gallery-container { padding: 12px; }
+  .controls { flex-direction: column; align-items: stretch; }
+  .controls .btn { max-width: none; }
+  .try-card { max-width: calc(100% - 20px); }
+  .try-pic { width: 50px; height: 50px; }
+  .try-hint { display: none; }
+  .chip { flex-basis: 44px; }
+  .strip-img { max-width: 260px; max-height: none; }
+}
