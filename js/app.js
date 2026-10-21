@@ -37,15 +37,15 @@ const roomTracker = new PoseTracker();
 let base = Baseline.load();        // saved calibration (the main person's)
 const GENERIC = new Baseline();    // for people nobody calibrated
 let lastSpot = null;               // where the last person was, for the spin meme
-let faceLandmarker = null, handLandmarker = null, poseLandmarker = null;
-let FaceLandmarker, HandLandmarker, PoseLandmarker, FilesetResolver;
+let worker = null, workerReady = false, inflight = false;   // detection runs in js/detect-worker.js
 let mirror = loadMirror();
 let group = loadPref("itsgiving.group", GROUP_DEFAULT);
 let reconfiguring = false;   // true while the detectors switch between group and solo
 let assets = {};
 let lastVideoTime = -1;
-let memeReady = false;      // every tracked person currently has a meme on (and it has finished popping in)
 let lowFpsSeconds = 0, perfLevel = 0;
+let calibView = null;       // what the calibration banner shows, updated as detections arrive
+let roomShown = null;       // the "everyone left" meme
 let lastTs = -1;
 let calibration = null;   // { collectors: Map(personId -> Collector), start, seen } while calibrating
 let boothRunning = false;
@@ -102,7 +102,7 @@ async function init() {
     return;
   }
   requestAnimationFrame(loop);
-  if (!faceLandmarker) setStatus("Camera on — loading the face, hand and body models (the first visit downloads about 40 MB)…");
+  if (!workerReady) setStatus("Camera on — loading the face, hand and body models (the first visit downloads about 40 MB)…");
 
   try {
     await models;
@@ -135,78 +135,112 @@ async function startCamera() {
   renderer.resize(video.videoWidth || PHOTOBOOTH_CONFIG.camera.width, video.videoHeight || PHOTOBOOTH_CONFIG.camera.height);
 }
 
+// Detection lives in a worker; the page only draws. Resolves once the models are ready.
 async function loadModels() {
-  const wasmPath = await loadMediaPipe();
-  const fileset = await FilesetResolver.forVisionTasks(wasmPath);
-  const [loadedAssets, face, hand, pose] = await Promise.all([
-    loadAssets(ASSETS),
-    create(FaceLandmarker, fileset, MEDIAPIPE.faceModel, { numFaces: counts().faces, outputFaceBlendshapes: true }),
-    create(HandLandmarker, fileset, MEDIAPIPE.handModel, { numHands: counts().hands }),
-    create(PoseLandmarker, fileset, MEDIAPIPE.poseModel, { numPoses: counts().faces }),
-  ]);
-  // The first detection compiles GPU programs and can stall for a moment; do it
-  // on a blank frame now rather than on the first live one.
-  const warm = document.createElement("canvas");
-  warm.width = 320;
-  warm.height = 240;
-  warm.getContext("2d").fillRect(0, 0, 320, 240);
-  for (const lm of [face, hand, pose]) lm.detectForVideo(warm, nextTs());
-  // Only now hand them to the render loop, all at once.
-  assets = loadedAssets;
-  [faceLandmarker, handLandmarker, poseLandmarker] = [face, hand, pose];
-}
-
-// Prefer the pinned copy in vendor/ (works offline); fall back to the same
-// pinned version on the CDN if vendor/tasks-vision isn't there.
-async function loadMediaPipe() {
+  const abs = (p) => new URL(p, location.href).href;
   const local = await fetch(`${MEDIAPIPE.wasmPath}/vision_wasm_internal.wasm`, { method: "HEAD" })
     .then((r) => r.ok).catch(() => false);
-  const base = local ? MEDIAPIPE.localBundle : MEDIAPIPE.cdnBundle;
-  ({ FaceLandmarker, HandLandmarker, PoseLandmarker, FilesetResolver } = await import(base));
+  const bundle = local ? new URL(MEDIAPIPE.localBundle, import.meta.url).href : MEDIAPIPE.cdnBundle;
+  const wasm = local ? abs(MEDIAPIPE.wasmPath) : `${MEDIAPIPE.cdnBase}/wasm`;
   if (!local) console.info(`vendor/tasks-vision not found, using ${MEDIAPIPE.cdnBase}`);
-  return local ? MEDIAPIPE.wasmPath : `${MEDIAPIPE.cdnBase}/wasm`;
+
+  worker = new Worker(new URL("./detect-worker.js", import.meta.url), { type: "module" });
+  const ready = new Promise((resolve, reject) => {
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "ready") { console.info("MediaPipe delegates:", m.delegates); resolve(); }
+      else if (m.type === "error" && m.during === "init") reject(new Error(m.message));
+      else onWorker(m);
+    };
+    worker.onerror = (e) => reject(new Error(e.message || "the detection worker failed to start"));
+  });
+  const models = { face: abs(MEDIAPIPE.faceModel), hand: abs(MEDIAPIPE.handModel), pose: abs(MEDIAPIPE.poseModel) };
+  worker.postMessage({ type: "init", bundle, wasm, models, faces: counts().faces, hands: counts().hands });
+  const [loadedAssets] = await Promise.all([loadAssets(ASSETS), ready]);
+  assets = loadedAssets;
+  workerReady = true;
 }
 
-// Strictly increasing timestamps, which MediaPipe's VIDEO mode requires.
-function nextTs() {
-  lastTs = Math.max(Math.round(performance.now()), lastTs + 1);
-  return lastTs;
+function onWorker(m) {
+  if (m.type === "result") { inflight = false; onResult(m); }
+  else if (m.type === "options") reconfiguring = false;
+  else if (m.type === "error") { console.warn("detection error:", m.message); inflight = false; }
 }
+
+// ---- the render loop: draws every camera frame, never waits for detection ----
 
 function loop() {
   requestAnimationFrame(loop);
   if (video.readyState < 2 || video.currentTime === lastVideoTime) return;
   lastVideoTime = video.currentTime;
-  fpsFrames++;
-  if (performance.now() - fpsSince > 1000) {
-    fps = (fpsFrames * 1000) / (performance.now() - fpsSince);
-    fpsFrames = 0;
-    fpsSince = performance.now();
-    // Struggling PC? Quietly use a smaller detection image and check bodies less often.
-    lowFpsSeconds = faceLandmarker && !reconfiguring && fps < 16 ? lowFpsSeconds + 1 : 0;
-    if (lowFpsSeconds >= 3 && perfLevel < 2) {
-      perfLevel++;
-      lowFpsSeconds = 0;
-      DETECT.width = perfLevel === 1 ? 416 : 336;
-      PEOPLE.poseEvery = 4 + perfLevel;
-    }
-  }
 
   // Phone rotated, or the camera changed resolution: follow it.
   if (video.videoWidth && (video.videoWidth !== renderer.W || video.videoHeight !== renderer.H)) {
     renderer.resize(video.videoWidth, video.videoHeight);
   }
-  const { W, H } = renderer;
-  const frame = renderer.capture(video, mirror);
-  if (!faceLandmarker || reconfiguring) {   // models loading / switching: just show the camera
+  renderer.capture(video, mirror);
+  const now = performance.now();
+
+  if (!workerReady || reconfiguring) {   // models loading / switching: just show the camera
     renderer.compose([]);
     return;
   }
-  const ts = nextTs();
+  if (calibration && calibView) {
+    renderer.compose([]);
+    renderer.drawCalibration(calibView.progress, calibView.most, calibView.hasFace, calibView.count);
+  } else {
+    renderer.compose(currentOverlays(now));
+  }
+
+  // Hand the newest frame to the detector whenever it's free (it always works on the latest, never a backlog).
+  if (!inflight) {
+    inflight = true;
+    const withHands = !calibration;
+    const withPose = !calibration && frameNo++ % PEOPLE.poseEvery === 0;
+    createImageBitmap(renderer.detect(DETECT.width))
+      .then((bmp) => worker.postMessage({ type: "detect", bmp, withHands, withPose }, [bmp]))
+      .catch(() => { inflight = false; });
+  }
+}
+
+/** Stickers for this instant: positions ease between detections so they glide at the camera's frame rate. */
+function currentOverlays(now) {
+  const out = [];
+  for (const p of people.list) {
+    const shown = p.tracker.shown;
+    if (!shown) continue;
+    if (!p.disp) p.disp = [...p.center];
+    p.disp[0] += (p.center[0] - p.disp[0]) * 0.6;
+    p.disp[1] += (p.center[1] - p.disp[1]) * 0.6;
+    out.push({ asset: assets[shown], elapsed: now - p.tracker.shownSince, center: p.disp, faceH: p.faceH, label: POSE_INFO[shown]?.label });
+  }
+  if (roomShown && !people.list.length && lastSpot) {
+    out.push({ asset: assets[roomShown], elapsed: now - roomTracker.shownSince, label: POSE_INFO[roomShown]?.label, ...lastSpot });
+  }
+  return out;
+}
+
+// ---- detection results: who is doing what -----------------------------------
+
+function onResult(r) {
   const now = performance.now();
-  const det = renderer.detect(DETECT.width);   // MediaPipe sees a smaller copy: same landmarks, far less work
-  const fr = faceLandmarker.detectForVideo(det, ts);
-  const faces = (fr.faceLandmarks || []).map((l, i) => new Face(l, fr.faceBlendshapes?.[i], W, H, mirror));
+  // Detection speed. A PC that can't keep up quietly gets a smaller detection image and fewer body checks.
+  fpsFrames++;
+  if (now - fpsSince > 1000) {
+    fps = (fpsFrames * 1000) / (now - fpsSince);
+    fpsFrames = 0;
+    fpsSince = now;
+    lowFpsSeconds = !reconfiguring && fps < 12 ? lowFpsSeconds + 1 : 0;
+    if (lowFpsSeconds >= 3 && perfLevel < 2) {
+      perfLevel++;
+      lowFpsSeconds = 0;
+      DETECT.width = perfLevel === 1 ? 512 : 416;
+      PEOPLE.poseEvery = 4 + perfLevel;
+    }
+  }
+
+  const { W, H } = renderer;
+  const faces = r.faces.map((l, i) => new Face(l, r.blend[i], W, H, mirror));
 
   if (calibration) {
     people.update(faces, [], [], now);
@@ -214,17 +248,13 @@ function loop() {
     return;
   }
 
-  const hr = handLandmarker.detectForVideo(det, ts);
-  const hands = (hr.landmarks || []).map((l) => new Hand(l, W, H));
-  if (frameNo++ % PEOPLE.poseEvery === 0) {
-    const pr = poseLandmarker.detectForVideo(det, ts);
-    lastBodies = (pr.landmarks || []).map((l) => new Body(l, W, H));
-  }
+  const hands = (r.hands || []).map((l) => new Hand(l, W, H));
+  if (r.pose) lastBodies = r.pose.map((l) => new Body(l, W, H));
   const bodies = lastBodies;
   people.update(faces, hands, bodies, now);
 
   // Each person gets judged on their own face, hands and body, with their own meme.
-  const overlays = [], active = [];
+  const active = [];
   for (const p of people.list) {
     const gesture = p.motion.update(p.hands, p.face, now);
     // Face hidden behind hands, or blurring past: keep judging hand poses on where it was.
@@ -235,24 +265,15 @@ function loop() {
     const raw = face ? decide(face, p.hands, p.body, tongue, gesture, m) : null;
     const shown = p.tracker.update(raw, now);
     p.debug = { raw, shown, m, tongue, gesture, ghost: !p.face && !!face };
-    if (shown) {
-      overlays.push({ asset: assets[shown], elapsed: now - p.tracker.shownSince, center: p.center, faceH: p.faceH, label: POSE_INFO[shown]?.label });
-      active.push(shown);
-    }
+    if (shown) active.push(shown);
     lastSpot = { center: [...p.center], faceH: p.faceH };
   }
 
-  memeReady = people.list.length > 0 && people.list.every((p) => p.tracker.shown && now - p.tracker.shownSince > 350);
-
   // Everyone gone (no faces, hands or bodies): spin, where the last person was.
   const empty = !people.list.length && !hands.length && !bodies.some((b) => b.seen);
-  const roomShown = roomTracker.update(empty ? "spin" : null, now);
-  if (roomShown && !people.list.length && lastSpot) {
-    overlays.push({ asset: assets[roomShown], elapsed: now - roomTracker.shownSince, label: POSE_INFO[roomShown]?.label, ...lastSpot });
-    active.push(roomShown);
-  }
+  roomShown = roomTracker.update(empty ? "spin" : null, now);
+  if (roomShown && !people.list.length && lastSpot) active.push(roomShown);
 
-  renderer.compose(overlays);
   guide.setActive(active);
   if (debugOn()) {
     const claimed = new Set(people.list.flatMap((p) => p.hands));
@@ -265,6 +286,12 @@ function loop() {
 function baselineFor(p) {
   if (p.baseline) return p.baseline;
   return people.list.length === 1 ? base : GENERIC;
+}
+
+/** Everyone in frame has a meme on, and it has finished popping in. */
+function memeIsReady() {
+  const now = performance.now();
+  return people.list.length > 0 && people.list.every((p) => p.tracker.shown && now - p.tracker.shownSince > 350);
 }
 
 /** Photo booth fallback: anyone without a meme yet gets this one. */
@@ -313,18 +340,9 @@ async function setGroup(on) {
   people.max = counts().faces;
   people.reset();
   try { localStorage.setItem("itsgiving.group", on ? "1" : "0"); } catch { /* not persisted */ }
-  if (!faceLandmarker) return;   // models not loaded yet: they'll be created with the right counts
-  reconfiguring = true;
-  try {
-    const { faces, hands } = counts();
-    await Promise.all([
-      faceLandmarker.setOptions({ numFaces: faces }),
-      handLandmarker.setOptions({ numHands: hands }),
-      poseLandmarker.setOptions({ numPoses: faces }),
-    ]);
-  } finally {
-    reconfiguring = false;
-  }
+  if (!workerReady) return;   // models not loaded yet: they'll be created with the right counts
+  reconfiguring = true;       // cleared when the worker confirms
+  worker.postMessage({ type: "options", ...counts() });
 }
 
 // ---- mirror ----------------------------------------------------------------
@@ -349,8 +367,9 @@ function setMirror(on) {
 // ---- calibration ---------------------------------------------------------
 
 function startCalibration() {
-  if (calibration || boothRunning || !faceLandmarker) return;
+  if (calibration || boothRunning || !workerReady) return;
   calibration = { collectors: new Map(), start: performance.now(), seen: 0 };
+  calibView = null;
   calibrateBtn.disabled = true;
   startBoothBtn.disabled = true;
   setStatus(`Everyone in frame: hold a bored face for ${CALIB.seconds} seconds. Blinking is fine — don't talk, smile or raise your eyebrows.`);
@@ -369,11 +388,10 @@ function stepCalibration(now) {
     }
   }
   const most = Math.max(0, ...[...c.collectors.values()].map((k) => k.n));
-  renderer.compose([]);
   // Normally done at CALIB.seconds; a slow machine keeps going until it has enough frames.
   const enough = most >= CALIB.minSamples;
   const progress = enough ? elapsed / CALIB.seconds : Math.min(elapsed / CALIB.seconds, most / CALIB.minSamples);
-  renderer.drawCalibration(progress, most, people.list.some((p) => p.face), people.list.filter((p) => p.face).length);
+  calibView = { progress, most, hasFace: people.list.some((p) => p.face), count: people.list.filter((p) => p.face).length };   // drawn by loop()
   if (elapsed < CALIB.seconds || (!enough && elapsed < CALIB.maxSeconds)) return;
 
   calibration = null;
@@ -416,7 +434,7 @@ function drawHud(list, handCount, roomShown) {
   const f = (v, d = 1) => (v ?? 0).toFixed(d);
   const s = (v) => `${(v ?? 0) >= 0 ? "+" : ""}${f(v)}σ`;
   const lines = [
-    `people: ${list.length}/${people.max}${group ? "" : " (group mode off)"}   hands: ${handCount}   ${fps.toFixed(0)} fps   ${mirror ? "mirrored" : "true view"}` +
+    `people: ${list.length}/${people.max}${group ? "" : " (group mode off)"}   hands: ${handCount}   detect ${fps.toFixed(0)}/s   ${mirror ? "mirrored" : "true view"}` +
       (roomShown ? `   room: ${roomShown}` : ""),
   ];
   list.forEach((p, i) => {
@@ -484,7 +502,7 @@ async function runBooth() {
     const waitStart = performance.now();
     let steady = 0, forced = false;
     while (performance.now() - waitStart < memeWaitMs + 8000) {   // hard cap, only matters if no face is found at all
-      steady = memeReady ? steady + 1 : 0;
+      steady = memeIsReady() ? steady + 1 : 0;
       if (steady >= 3) break;
       if (!forced && performance.now() - waitStart > memeWaitMs) { forced = true; forceMissing(ideas[i]); }
       await sleep(40);

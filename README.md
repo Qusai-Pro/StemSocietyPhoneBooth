@@ -84,7 +84,7 @@ What changed:
 
 | | |
 |---|---|
-| Faster tracking | Stickers follow you quickly when you move and stay calm when you're still (`SMOOTH` in `js/config.js`). MediaPipe runs on a 640 px copy of the frame (`DETECT`), and the camera asks for 30 fps. |
+| Faster tracking | Face, hand and body detection runs in a background worker (`js/detect-worker.js`), so the live video and stickers draw at the camera's full speed however many people are in frame. Stickers follow you quickly when you move and stay calm when you're still (`SMOOTH` in `js/config.js`). Detection uses a 640 px copy of the frame (`DETECT`) and lightens itself automatically if the PC can't keep up. |
 | Smaller memes | Memes are small stickers floating above your head, so your face stays visible (`MEME.scale` 0.6, `MEME.maxWidth`, `MEME.gap`). Rounded white sticker with a red outline, pops in, bobs slightly. |
 | Comic tags | A pixel tag with the reaction's name sits on each sticker ("BRUH", "GIGACHAD", "CRASHING OUT"...). Edit the names in `POSE_INFO`. |
 | On-screen guide | A **TRY THIS** card cycles through the reactions with a one-line how-to, and a bar of emotes along the bottom lights up when someone does one. Tap an emote to preview its meme. During a photo session the card suggests a pose for each shot. The guide is HTML on top of the video, so it never appears in photos. |

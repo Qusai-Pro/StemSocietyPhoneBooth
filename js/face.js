@@ -357,6 +357,10 @@ export class PoseTracker {
   force(pose, now, ms = 2000) {
     this.forced = pose;
     this.forcedUntil = now + ms;
+    // Show it right away rather than waiting for the next detection result.
+    if (this.shown !== pose) this.shownSince = now;
+    this.shown = pose;
+    this.hold = HOLD_FRAMES;
   }
 
   update(raw, now) {

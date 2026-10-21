@@ -43,7 +43,7 @@ export const SMOOTH = { slow: 0.35, fast: 0.9, ref: 0.25 };   // ref: movement (
 
 // Detection runs on a downscaled copy of the frame (landmarks are normalised, so
 // nothing else changes). Much faster on big webcams; 0 = full size.
-export const DETECT = { width: 512 };   // auto-drops further if the PC is struggling (see app.js)
+export const DETECT = { width: 640 };   // detection runs in a worker, so it can afford a bigger picture (better for people standing far back); auto-drops if the PC struggles
 
 // Label, emoji and instructions for each reaction: used by the on-screen guide
 // and the comic tag that pops up on the sticker.
